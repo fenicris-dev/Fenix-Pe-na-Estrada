@@ -388,7 +388,7 @@
 
   <!-- RESULTADO -->
   <div id="painelResultado" class="card hide">
-    <h2>Resultado da corrida</h2>
+    <h2 id="resTitulo">Resultado da corrida</h2>
     <div class="result-hero">
       <div class="valor" id="resMedia">R$ 0,00</div>
       <div class="lab">por km rodado (bruto)</div>
@@ -396,7 +396,7 @@
     <div class="stat-grid">
       <div class="stat-box"><div class="v" id="resKmReal">0 km</div><div class="l">km real rodado</div></div>
       <div class="stat-box"><div class="v" id="resTempo">0 min</div><div class="l">tempo total</div></div>
-      <div class="stat-box"><div class="v" id="resKmColeta">0 km</div><div class="l">até a coleta</div></div>
+      <div class="stat-box"><div class="v" id="resKmColeta">0 km</div><div class="l" id="resKmColetaLabel">até a coleta</div></div>
       <div class="stat-box"><div class="v" id="resValor">R$ 0,00</div><div class="l">valor total</div></div>
     </div>
     <div id="resLiquidoInfo"></div>
@@ -594,7 +594,7 @@
 
 <footer class="app-footer">
   <a href="https://www.instagram.com/fenixsolucoestecnologicas/" target="_blank" rel="noopener">Fênix Soluções Tecnológicas</a>
-  <span class="footer-versao">v2.3</span>
+  <span class="footer-versao">v2.5</span>
   <a href="https://wa.me/5579999680880" target="_blank" rel="noopener">&lt;Cristiano Fênix/&gt;</a>
 </footer>
 
@@ -1158,7 +1158,9 @@ function salvarNovoVeiculo(){
       reservaSegurancaKm: reserva,
       capacidadeTanqueLitros: isNaN(capacidade) ? null : capacidade,
       kmReferencia: existente ? existente.kmReferencia : null,
-      autonomiaReferencia: existente ? existente.autonomiaReferencia : 0
+      autonomiaReferencia: existente ? existente.autonomiaReferencia : 0,
+      trocasOdometro: existente ? (existente.trocasOdometro||[]) : [],
+      offsetOdometro: existente ? (existente.offsetOdometro||0) : 0
     };
   } else {
     var placa = document.getElementById('nvPlaca').value.trim().toUpperCase();
@@ -1171,7 +1173,9 @@ function salvarNovoVeiculo(){
       reservaSegurancaKm: reserva,
       capacidadeTanqueLitros: isNaN(capacidade) ? null : capacidade,
       kmReferencia: null,
-      autonomiaReferencia: 0
+      autonomiaReferencia: 0,
+      trocasOdometro: [],
+      offsetOdometro: 0
     };
     dados.veiculoAtivo = placa;
   }
@@ -1179,6 +1183,80 @@ function salvarNovoVeiculo(){
   placaEmEdicao = null;
   fecharOverlayVeiculo();
 }
+
+function abrirTrocaOdometro(placa){
+  var dados = carregarDados();
+  var v = dados.veiculos[placa];
+  if(!v) return;
+  var hectometro = v.odometroHectometro !== false;
+  var historico = '';
+  if(v.trocasOdometro && v.trocasOdometro.length){
+    historico = '<label style="margin-top:16px;">Trocas já registradas</label>';
+    v.trocasOdometro.slice().reverse().forEach(function(t){
+      historico += '<div class="hist-mini" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">' +
+        '<span>'+t.data+' '+t.hora+' — de '+formatKm(t.kmAntes)+' para '+formatKm(t.kmDepois)+'</span>' +
+        '<button class="btn btn-outline" style="margin-top:0;padding:6px 10px;font-size:12px;width:auto;" onclick="removerTrocaOdometro(\''+placa+'\','+t.id+')">Remover</button>' +
+        '</div>';
+    });
+  }
+  var html = '<h2>Odômetro trocado</h2>' +
+    '<p class="sub" style="margin:-6px 0 14px;">Use isto quando o odômetro físico quebrar e for trocado por outro que não continua a contagem antiga (ex: volta pra 000000). O app vai ajustar automaticamente o histórico de autonomia pra não dar erro.</p>' +
+    '<label>Último KM que aparecia no odômetro ANTIGO (antes de quebrar)</label>' +
+    '<input type="text" inputmode="numeric" maxlength="6" id="inTrocaKmAntes" placeholder="Ex: 199050" oninput="limitarOdometro(this)">' +
+    '<span class="field-hint">'+(hectometro?'6 dígitos — o último é o hectômetro':'6 dígitos — número inteiro de km')+'</span>' +
+    '<label>KM que aparece no odômetro NOVO agora</label>' +
+    '<input type="text" inputmode="numeric" maxlength="6" id="inTrocaKmDepois" placeholder="Ex: 000000" value="000000" oninput="limitarOdometro(this)">' +
+    '<span class="field-hint">Normalmente 0, mas informe o que estiver marcando de fato.</span>' +
+    '<button class="btn btn-primary" onclick="confirmarTrocaOdometro(\''+placa+'\')">Confirmar Troca</button>' +
+    '<button class="btn btn-ghost" onclick="fecharOverlayVeiculo()">Cancelar</button>' +
+    historico;
+  document.getElementById('overlayVeiculoConteudo').innerHTML = html;
+  document.getElementById('overlayVeiculo').classList.remove('hide');
+}
+
+function confirmarTrocaOdometro(placa){
+  var kmAntes = lerOdometro('inTrocaKmAntes');
+  var kmDepois = lerOdometro('inTrocaKmDepois');
+  if(isNaN(kmAntes)){ alert('Informe o último KM do odômetro antigo.'); return; }
+  if(isNaN(kmDepois)){ alert('Informe o KM do odômetro novo.'); return; }
+  if(!confirm('Confirma a troca de odômetro: de '+formatKm(kmAntes)+' (antigo) para '+formatKm(kmDepois)+' (novo)?\n\nIsso vai recalcular todo o histórico de autonomia deste veículo. Confira os números antes de confirmar — dá pra remover essa troca depois se precisar.')){ return; }
+
+  var dados = carregarDados();
+  var v = dados.veiculos[placa];
+  if(!v) return;
+  if(!v.trocasOdometro) v.trocasOdometro = [];
+
+  var agora = new Date();
+  v.trocasOdometro.push({
+    id: Date.now(),
+    ts: Date.now(),
+    data: agora.toLocaleDateString('pt-BR'),
+    hora: agora.toLocaleTimeString('pt-BR'),
+    kmAntes: kmAntes,
+    kmDepois: kmDepois
+  });
+  v.offsetOdometro = (v.offsetOdometro||0) + (kmAntes - kmDepois);
+
+  recalcularLedgerVeiculo(dados, placa);
+  salvarDados(dados);
+  abrirTrocaOdometro(placa);
+  renderConfig();
+}
+
+function removerTrocaOdometro(placa, trocaId){
+  if(!confirm('Remover esta troca de odômetro? O histórico de autonomia deste veículo será recalculado sem ela.')) return;
+  var dados = carregarDados();
+  var v = dados.veiculos[placa];
+  if(!v || !v.trocasOdometro) return;
+  v.trocasOdometro = v.trocasOdometro.filter(function(t){ return t.id !== trocaId; });
+  v.offsetOdometro = v.trocasOdometro.reduce(function(soma,t){ return soma + (t.kmAntes - t.kmDepois); }, 0);
+  recalcularLedgerVeiculo(dados, placa);
+  salvarDados(dados);
+  abrirTrocaOdometro(placa);
+  renderConfig();
+}
+
+function abrirRegistrarTrocaOdometro(placa){ abrirTrocaOdometro(placa); }
 
 function selecionarVeiculo(placa){
   var dados = carregarDados();
@@ -1198,9 +1276,18 @@ function fecharOverlayVeiculo(){
   else if(!document.getElementById('viewConfig').classList.contains('hide')) renderConfig();
 }
 
-function atualizarAutonomiaAteKm(dados, placa, kmAtual){
+function offsetOdometroEm(v, ts){
+  var off = 0;
+  (v.trocasOdometro||[]).forEach(function(t){
+    if(t.ts <= ts) off += (t.kmAntes - t.kmDepois);
+  });
+  return off;
+}
+
+function atualizarAutonomiaAteKm(dados, placa, kmAtualRaw){
   var v = dados.veiculos[placa];
   if(!v) return 0;
+  var kmAtual = kmAtualRaw + (v.offsetOdometro||0);
   if(v.kmReferencia === null || v.kmReferencia === undefined){
     v.kmReferencia = kmAtual;
   } else if(kmAtual > v.kmReferencia){
@@ -1730,6 +1817,8 @@ function mostrarResultado(c){
   document.getElementById('resKmReal').textContent = formatKm(c.kmRodadoReal);
   document.getElementById('resTempo').textContent = formatTempo(c.tempoTotalMin);
   document.getElementById('resKmColeta').textContent = formatKm(c.kmColeta - c.kmSaida);
+  document.getElementById('resTitulo').textContent = c.canceladaAntesColeta ? 'Corrida cancelada' : 'Resultado da corrida';
+  document.getElementById('resKmColetaLabel').textContent = c.canceladaAntesColeta ? 'até o cancelamento' : 'até a coleta';
   var valorTotal = c.valorReceber + (c.ressarcimentoApp||0);
   document.getElementById('resValor').textContent = formatMoney(valorTotal);
 
@@ -1807,17 +1896,18 @@ function recalcularLedgerVeiculo(dados, placa){
   var v = dados.veiculos[placa];
   if(!v) return;
   var eventos = [];
-  dados.abastecimentos.forEach(function(a){ if(a.placa === placa) eventos.push({km:a.km, tipo:'abastecimento', ref:a}); });
+  dados.abastecimentos.forEach(function(a){ if(a.placa === placa) eventos.push({km:a.km, ts:a.id, tipo:'abastecimento', ref:a}); });
   dados.corridas.forEach(function(c){
     if(c.placa === placa && c.kmChegadaFinal !== null && c.kmChegadaFinal !== undefined && (c.status==='concluida'||c.status==='cancelada')){
-      eventos.push({km:c.kmChegadaFinal, tipo:'corrida'});
+      eventos.push({km:c.kmChegadaFinal, ts:(c.fimTs||c.id||0), tipo:'corrida'});
     }
   });
-  eventos.sort(function(x,y){ return x.km - y.km; });
+  eventos.forEach(function(ev){ ev.kmAjustado = ev.km + offsetOdometroEm(v, ev.ts); });
+  eventos.sort(function(x,y){ return x.ts - y.ts; });
   var autonomia = 0, kmRef = null;
   eventos.forEach(function(ev){
-    if(kmRef !== null && ev.km > kmRef){ autonomia = Math.max(0, autonomia - (ev.km - kmRef)); }
-    kmRef = ev.km;
+    if(kmRef !== null && ev.kmAjustado > kmRef){ autonomia = Math.max(0, autonomia - (ev.kmAjustado - kmRef)); }
+    kmRef = ev.kmAjustado;
     if(ev.tipo === 'abastecimento'){
       var a = ev.ref;
       a.autonomiaAntes = autonomia;
@@ -2106,7 +2196,10 @@ function renderConfig(){
         '<div class="hist-top"><div><b style="color:var(--azul-header);">'+placa+'</b>'+(ativo?' <span class="badge badge-ok">ativo</span>':'')+
         '<div class="hist-mini">'+(v.apelido?v.apelido+' • ':'')+(v.tipo==='carro'?'🚗 Carro':'🏍️ Moto')+' • '+v.consumoKmPorLitro+' km/l • '+(v.odometroHectometro===false?'odômetro digital':'odômetro mecânico')+'</div>' +
         '<div class="hist-mini">Reserva: '+v.reservaSegurancaKm+' km'+(v.capacidadeTanqueLitros?' • Tanque: '+v.capacidadeTanqueLitros+' L':'')+'</div></div></div>' +
-        '<button class="btn btn-outline" style="margin-top:10px;padding:10px;font-size:13px;" onclick="abrirEditarVeiculo(\''+placa+'\')">✏️ Editar</button>';
+        '<div class="row2" style="margin-top:10px;">' +
+        '<button class="btn btn-outline" style="margin-top:0;padding:10px;font-size:13px;" onclick="abrirEditarVeiculo(\''+placa+'\')">✏️ Editar</button>' +
+        '<button class="btn btn-outline" style="margin-top:0;padding:10px;font-size:13px;" onclick="abrirTrocaOdometro(\''+placa+'\')">🔧 Odômetro trocado</button>' +
+        '</div>';
       listaVeic.appendChild(div);
     });
   }
@@ -2230,21 +2323,26 @@ atualizarStatusConexao();
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
     var swSource = [
-      "var CACHE_NAME = 'pe-na-estrada-cache-v1';",
+      "var CACHE_VERSION = 'v2.4';",
+      "var CACHE_NAME = 'pe-na-estrada-cache-' + CACHE_VERSION;",
       "self.addEventListener('install', function(event){ self.skipWaiting(); });",
-      "self.addEventListener('activate', function(event){ event.waitUntil(self.clients.claim()); });",
+      "self.addEventListener('activate', function(event){",
+      "  event.waitUntil(",
+      "    caches.keys().then(function(nomes){",
+      "      return Promise.all(nomes.filter(function(n){ return n !== CACHE_NAME; }).map(function(n){ return caches.delete(n); }));",
+      "    }).then(function(){ return self.clients.claim(); })",
+      "  );",
+      "});",
       "self.addEventListener('fetch', function(event){",
       "  if (event.request.method !== 'GET') return;",
       "  event.respondWith(",
-      "    caches.open(CACHE_NAME).then(function(cache){",
-      "      return cache.match(event.request).then(function(cached){",
-      "        var fetchPromise = fetch(event.request).then(function(response){",
-      "          if (response && response.status === 200) { cache.put(event.request, response.clone()); }",
-      "          return response;",
-      "        }).catch(function(){ return cached; });",
-      "        return cached || fetchPromise;",
-      "      });",
-      "    })",
+      "    fetch(event.request).then(function(response){",
+      "      if (response && response.status === 200) {",
+      "        var copia = response.clone();",
+      "        caches.open(CACHE_NAME).then(function(cache){ cache.put(event.request, copia); });",
+      "      }",
+      "      return response;",
+      "    }).catch(function(){ return caches.match(event.request); })",
       "  );",
       "});"
     ].join('\n');
